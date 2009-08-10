@@ -70,7 +70,6 @@ handle_cast(timer, #state{sock = Sock,
 			  host = Host, port = Port,
 			  interval = Interval,
 			  values = Values} = State) ->
-    io:format("Timer with: ~p~n", [Values]),
     send_packet(Sock, Host, Port, Interval, Values),
     Values2 = collectd_values:forget_gauges(Values),
     {noreply, State#state{values = Values2}};
@@ -125,7 +124,6 @@ send_packet(Sock, Host, Port, Interval, Values) ->
     {MS, S, _} = erlang:now(),
     Time = MS * 1000000 + S,
     [Name, Hostname | _] = string:tokens(atom_to_list(node()), "@"),
-    io:format("values: ~p~n", [collectd_values:to_list(Values)]),
     Parts = [collectd_pkt:pack_plugin("erlang"),
 	     collectd_pkt:pack_plugin_instance(Name)
 	     | lists:map(fun({type, Type}) ->
@@ -138,7 +136,6 @@ send_packet(Sock, Host, Port, Interval, Values) ->
 				 collectd_pkt:pack_values(Values2)
 			 end, collectd_values:to_list(Values))],
     Pkt = collectd_pkt:pack(Hostname, Time, Interval, Parts),
-    io:format("send(~p, ~p, ~p, ~p)~n",[Sock, Host, Port, Pkt]),
     ok = gen_udp:send(Sock, Host, Port, Pkt).
 
 
