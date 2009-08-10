@@ -100,7 +100,9 @@ inc_counter(V, Values) ->
 
 to_list(Values) ->
     lists:foldl(
-      fun({Type, V1}, R1) ->
+      fun({_, []}, R1) ->
+	      R1;
+	 ({Type, V1}, R1) ->
 	      R1 ++
 		  [{type, Type}] ++
 		  lists:foldl(
