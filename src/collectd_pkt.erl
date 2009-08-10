@@ -69,4 +69,6 @@ pack_values(TypesValues) ->
 
 htond(Float) ->
     <<_:16, B/binary>> = term_to_binary(Float, [{minor_version, 1}]),
-    B.
+    list_to_binary(
+      lists:reverse(
+	binary_to_list(B))).
