@@ -9,7 +9,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
 
--record(state, {sock, host, port}).
+-record(state, {sock, interval, host, port, values}).
 
 %%====================================================================
 %% API
@@ -19,7 +19,7 @@
 %% Description: Starts the server
 %%--------------------------------------------------------------------
 start_link(Interval, Host, Port) ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [Interval, Host, Port], []).
+    gen_server:start_link(?MODULE, [Interval, Host, Port], []).
 
 %%====================================================================
 %% gen_server callbacks
@@ -33,13 +33,19 @@ start_link(Interval, Host, Port) ->
 %% Description: Initiates the server
 %%--------------------------------------------------------------------
 init([Interval, Host, Port]) ->
-    {ok, Sock} = gen_udp:open(0),
+    AF = case Host of
+	     {_, _, _, _} -> inet;
+	     {_, _, _, _, _, _, _, _} -> inet6
+	 end,
+    {ok, Sock} = gen_udp:open(0, [AF]),
     I = self(),
+    Timeout = trunc(Interval * 1000),
     spawn_link(fun() ->
-		       timer(I, Interval)
+		       timer(I, Timeout)
 	       end),
-    {ok, #state{socket = Sock,
-		host = Host, port = Port}, Interval}.
+    {ok, #state{sock = Sock, interval = Interval,
+		host = Host, port = Port,
+		values = collectd_values:new()}, Interval}.
 
 %%--------------------------------------------------------------------
 %% Function: %% handle_call(Request, From, State) -> {reply, Reply, State} |
@@ -60,8 +66,30 @@ handle_call(_Request, _From, State) ->
 %%                                      {stop, Reason, State}
 %% Description: Handling cast messages
 %%--------------------------------------------------------------------
-handle_cast(timer, State) ->
-    {noreply, State}.
+handle_cast(timer, #state{sock = Sock,
+			  host = Host, port = Port,
+			  interval = Interval,
+			  values = Values} = State) ->
+    io:format("Timer with: ~p~n", [Values]),
+    send_packet(Sock, Host, Port, Interval, Values),
+    Values2 = collectd_values:forget_gauges(Values),
+    {noreply, State#state{values = Values2}};
+
+handle_cast({set_gauge, Type, TypeInstance, Values},
+	    #state{values = Values1} = State) ->
+    Values2 = collectd_values:set_gauge(Values1, Type, TypeInstance, Values),
+    {noreply, State#state{values = Values2}};
+
+handle_cast({inc_counter, Type, TypeInstance, Values},
+	    #state{values = Values1} = State) ->
+    Values2 = collectd_values:inc_counter(Values1, Type, TypeInstance, Values),
+    {noreply, State#state{values = Values2}};
+
+handle_cast({set_counter, Type, TypeInstance, Values},
+	    #state{values = Values1} = State) ->
+    Values2 = collectd_values:set_counter(Values1, Type, TypeInstance, Values),
+    {noreply, State#state{values = Values2}}.
+
 
 %%--------------------------------------------------------------------
 %% Function: handle_info(Info, State) -> {noreply, State} |
@@ -93,9 +121,30 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%--------------------------------------------------------------------
 
-timer(Pid, Interval) ->
+send_packet(Sock, Host, Port, Interval, Values) ->
+    {MS, S, _} = erlang:now(),
+    Time = MS * 1000000 + S,
+    [Name, Hostname | _] = string:tokens(atom_to_list(node()), "@"),
+    io:format("values: ~p~n", [collectd_values:to_list(Values)]),
+    Parts = [collectd_pkt:pack_plugin("erlang"),
+	     collectd_pkt:pack_plugin_instance(Name)
+	     | lists:map(fun({type, Type}) ->
+				 collectd_pkt:pack_type(Type);
+			    ({type_instance, TypeInstance}) ->
+				 collectd_pkt:pack_type_instance(TypeInstance);
+			    ({values, ValuesType, Values1}) ->
+				 Values2 = [{ValuesType, Value}
+					    || Value <- Values1],
+				 collectd_pkt:pack_values(Values2)
+			 end, collectd_values:to_list(Values))],
+    Pkt = collectd_pkt:pack(Hostname, Time, Interval, Parts),
+    io:format("send(~p, ~p, ~p, ~p)~n",[Sock, Host, Port, Pkt]),
+    ok = gen_udp:send(Sock, Host, Port, Pkt).
+
+
+timer(Pid, Timeout) ->
     gen_server:cast(Pid, timer),
     receive
-	after Interval * 1000000 ->
-		timer(Pid, Interval)
+	after Timeout ->
+		timer(Pid, Timeout)
 	end.
