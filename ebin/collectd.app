@@ -1,0 +1,1 @@
+../src/collectd.app
