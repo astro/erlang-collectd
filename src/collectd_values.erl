@@ -18,17 +18,20 @@ set_gauge(V, Type, TypeInstance, Values) ->
 set_gauge(V, TypeInstance, Values) ->
     case lists:keysearch(TypeInstance, 1, V) of
 	false ->
-	    V2 = set_gauge([], Values),
+	    V2 = set_gauge(nil, Values),
 	    [{TypeInstance, gauge, V2} | V];
 	{value, {_, gauge, V1}} ->
 	    V2 = set_gauge(V1, Values),
 	    lists:keystore(TypeInstance, 1, V, {TypeInstance, gauge, V2})
     end.
 
-set_gauge(V, Values) ->
-    %% Gauges are a list of lists, to be averaged prior sending
-    [Values | V].
-
+set_gauge(nil, Values) ->
+    {1, Values};
+set_gauge({N, Values1}, Values) ->
+    %% Gauges are a counts and sums, to be averaged prior sending
+    Values2 = lists:zipwith(fun(A, B) -> A + B end,
+			    Values1, Values),
+    {N + 1, Values2}.
 
 %% We can discard gauges after sending for having unknown values. This
 %% shouldn't be done with counters.
@@ -112,22 +115,10 @@ to_list(Values) ->
 				 counter ->
 				     {values, counter, V2};
 				 gauge ->
-				     Averages = average_lists(V2),
+				     {N, Sums} = V2,
+				     Averages = [Sum / N || Sum <- Sums],
 				     {values, gauge, Averages}
 			     end] ++
 				R2
 		    end, [], V1)
       end, [], Values).
-
-average_lists([[] | _]) ->
-    [];
-average_lists(Lists) ->
-    {Heads, Tails} = lists:foldl(fun([Head | Tail], {Heads, Tails}) ->
-					 {[Head | Heads], [Tail | Tails]}
-				 end, {[], []}, Lists),
-    HeadSum = lists:foldl(fun(H, S) ->
-				  H + S
-			  end, 0, Heads),
-    HeadCount = length(Heads),
-    Average = HeadSum / HeadCount,
-    [Average | average_lists(Tails)].
