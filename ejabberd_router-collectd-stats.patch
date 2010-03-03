@@ -1,0 +1,42 @@
+From f12e744fb37ac0ca68ed522bb392487ff97630d1 Mon Sep 17 00:00:00 2001
+From: Astro <astro@spaceboyz.net>
+Date: Wed, 3 Mar 2010 03:16:02 +0100
+Subject: [PATCH] ejabberd_router: collectd stats
+
+---
+ src/ejabberd_app.erl    |    2 ++
+ src/ejabberd_router.erl |    5 +++++
+ 2 files changed, 7 insertions(+), 0 deletions(-)
+
+diff --git a/src/ejabberd_app.erl b/src/ejabberd_app.erl
+index d914f73..40971b8 100644
+--- a/src/ejabberd_app.erl
++++ b/src/ejabberd_app.erl
+@@ -58,6 +58,8 @@ start(normal, _Args) ->
+     ejabberd_rdbms:start(),
+     ejabberd_auth:start(),
+     cyrsasl:start(),
++    application:start(collectd),
++    collectd:add_server(10),
+     % Profiling
+     %eprof:start(),
+     %eprof:profile([self()]),
+diff --git a/src/ejabberd_router.erl b/src/ejabberd_router.erl
+index 0230480..cd83c23 100644
+--- a/src/ejabberd_router.erl
++++ b/src/ejabberd_router.erl
+@@ -64,6 +64,11 @@ start_link() ->
+ 
+ 
+ route(From, To, Packet) ->
++    Type = case Packet of
++	       {xmlelement, N, _, _} -> N
++	   end,
++    collectd:inc_counter(stanzas, Type, [1]),
++
+     case catch do_route(From, To, Packet) of
+ 	{'EXIT', Reason} ->
+ 	    ?ERROR_MSG("~p~nwhen processing: ~p",
+-- 
+1.6.6.1
+
