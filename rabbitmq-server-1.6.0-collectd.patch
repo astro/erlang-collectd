@@ -1,0 +1,58 @@
+diff -urN rabbitmq-server-1.6.0/src/rabbit.erl rabbitmq-server-1.6.0-collectd/src/rabbit.erl
+--- rabbitmq-server-1.6.0/src/rabbit.erl	2009-06-16 17:08:59.000000000 +0000
++++ rabbitmq-server-1.6.0-collectd/src/rabbit.erl	2010-06-21 15:00:47.000000000 +0000
+@@ -48,7 +48,7 @@
+ -include("rabbit_framing.hrl").
+ -include("rabbit.hrl").
+ 
+--define(APPS, [os_mon, mnesia, rabbit]).
++-define(APPS, [os_mon, mnesia, collectd, rabbit]).
+ 
+ %%----------------------------------------------------------------------------
+ 
+@@ -75,7 +75,8 @@
+     try
+         ok = ensure_working_log_handlers(),
+         ok = rabbit_mnesia:ensure_mnesia_dir(),
+-        ok = rabbit_misc:start_applications(?APPS)
++        ok = rabbit_misc:start_applications(?APPS),
++	catch collectd:add_server(10, {172,21,1,119})
+     after
+         %%give the error loggers some time to catch up
+         timer:sleep(100)
+diff -urN rabbitmq-server-1.6.0/src/rabbit_channel.erl rabbitmq-server-1.6.0-collectd/src/rabbit_channel.erl
+--- rabbitmq-server-1.6.0/src/rabbit_channel.erl	2009-06-16 17:08:59.000000000 +0000
++++ rabbitmq-server-1.6.0-collectd/src/rabbit_channel.erl	2010-06-21 14:44:48.000000000 +0000
+@@ -116,6 +116,8 @@
+     noreply(State).
+ 
+ handle_cast({method, Method, Content}, State) ->
++	M = hd(tuple_to_list(Method)),
++	catch collectd:inc_counter(counter, M, [1]),
+     try handle_method(Method, Content, State) of
+         {reply, Reply, NewState} ->
+             ok = rabbit_writer:send_command(NewState#ch.writer_pid, Reply),
+diff -urN rabbitmq-server-1.6.0/src/rabbit_mnesia.erl rabbitmq-server-1.6.0-collectd/src/rabbit_mnesia.erl
+--- rabbitmq-server-1.6.0/src/rabbit_mnesia.erl	2009-06-16 17:08:59.000000000 +0000
++++ rabbitmq-server-1.6.0-collectd/src/rabbit_mnesia.erl	2010-06-21 15:25:50.000000000 +0000
+@@ -69,6 +69,7 @@
+     ok = ensure_mnesia_dir(),
+     ok = init_db(read_cluster_nodes_config()),
+     ok = wait_for_tables(),
++	spawn(fun stats_loop/0),
+     ok.
+ 
+ is_db_empty() ->
+@@ -446,3 +447,12 @@
+         false -> throw({error, {no_running_cluster_nodes,
+                                 Nodes, RunningNodes}})
+     end.
++
++stats_loop() ->
++	lists:foreach(fun(Tab) ->
++			N = length(mnesia:dirty_all_keys(Tab)),
++			collectd:set_gauge(records, Tab, [N])
++		end, table_names()),
++	receive after 10000 -> ok end,
++	?MODULE:stats_loop().
++
